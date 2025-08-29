@@ -85,7 +85,7 @@ def generate_slide_content(text_input, llm_guidance, api_key, provider):
 # Route to serve the HTML file
 @app.route('/')
 def serve_index():
-    return send_from_directory(os.getcwd(), 'frontend/index.html')
+    return send_from_directory(os.getcwd(), 'templates/index.html')
 
 # Main API endpoint to generate the presentation
 @app.route('/generate_pptx', methods=['POST'])
