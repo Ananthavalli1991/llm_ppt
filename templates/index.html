@@ -1,77 +1,128 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Text → PowerPoint (Template Clone)</title>
-  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
-  <script defer src="https://unpkg.com/alpinejs@3.13.7/dist/cdn.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Text, Your Style</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
-  <div class="max-w-5xl mx-auto py-10 px-4">
-    <header class="mb-8">
-      <h1 class="text-3xl font-bold tracking-tight">Your Text, Your Style</h1>
-      <p class="text-gray-600">Turn bulk text, markdown, or prose into a PowerPoint that matches your uploaded template.</p>
-    </header>
+<body class="bg-gray-100 text-gray-800 p-4 sm:p-8 flex items-center justify-center min-h-screen">
+    <div class="bg-white p-6 sm:p-10 rounded-xl shadow-lg w-full max-w-2xl border-2 border-gray-200">
+        <h1 class="text-3xl sm:text-4xl font-bold text-center text-gray-900 mb-2">Your Text, Your Style</h1>
+        <p class="text-center text-gray-500 mb-8 text-sm sm:text-base">
+            Turn your text into a custom-styled presentation.
+        </p>
 
-    <form id="gen-form" hx-post="/generate" hx-encoding="multipart/form-data" hx-target="#result" hx-swap="innerHTML" class="grid grid-cols-1 gap-6">
-      <div>
-        <label class="block text-sm font-medium text-gray-700">Input Text (Markdown or Prose)</label>
-        <textarea name="input_text" rows="10" required class="mt-1 block w-full rounded-2xl border-gray-300 shadow-sm focus:ring-2 focus:ring-indigo-500 p-4" placeholder="Paste your content here..."></textarea>
-      </div>
+        <form id="presentation-form" class="space-y-6">
+            <div>
+                <label for="text-input" class="block text-sm font-medium text-gray-700 mb-1">
+                    Your Text (Prose or Markdown):
+                </label>
+                <textarea id="text-input" required
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm h-48"></textarea>
+            </div>
 
-      <div class="grid md:grid-cols-2 gap-6">
-        <div>
-          <label class="block text-sm font-medium text-gray-700">Optional Guidance</label>
-          <input type="text" name="guidance" class="mt-1 block w-full rounded-2xl border-gray-300 shadow-sm focus:ring-2 focus:ring-indigo-500 p-3" placeholder="e.g., turn into an investor pitch deck"/>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700">Slide Notes</label>
-          <select name="with_notes" class="mt-1 block w-full rounded-2xl border-gray-300 shadow-sm focus:ring-2 focus:ring-indigo-500 p-3">
-            <option value="false" selected>No speaker notes</option>
-            <option value="true">Auto-generate notes (LLM)</option>
-          </select>
-        </div>
-      </div>
+            <div>
+                <label for="llm-guidance" class="block text-sm font-medium text-gray-700 mb-1">
+                    Guidance (e.g., "investor pitch deck", "technical summary"):
+                </label>
+                <input type="text" id="llm-guidance" placeholder="Optional"
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+            </div>
+            
+            <div>
+                <label for="api-key" class="block text-sm font-medium text-gray-700 mb-1">
+                    Your LLM API Key:
+                </label>
+                <input type="password" id="api-key" required
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                <p class="mt-2 text-xs text-gray-500">
+                    Your key is used for this session only and is not stored or logged.
+                </p>
+            </div>
 
-      <div class="grid md:grid-cols-3 gap-6">
-        <div>
-          <label class="block text-sm font-medium text-gray-700">LLM Provider</label>
-          <select name="provider" class="mt-1 block w-full rounded-2xl border-gray-300 shadow-sm focus:ring-2 focus:ring-indigo-500 p-3">
-            <option value="openai" selected>OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="gemini">Gemini</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700">Model (by provider)</label>
-          <input type="text" name="model" class="mt-1 block w-full rounded-2xl border-gray-300 shadow-sm focus:ring-2 focus:ring-indigo-500 p-3" placeholder="e.g., gpt-4o-mini / claude-3-5-sonnet / gemini-1.5-pro"/>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700">Your API Key (never stored)</label>
-          <input type="password" name="api_key" required class="mt-1 block w-full rounded-2xl border-gray-300 shadow-sm focus:ring-2 focus:ring-indigo-500 p-3" placeholder="Paste your key here"/>
-        </div>
-      </div>
+            <div>
+                <label for="template-file" class="block text-sm font-medium text-gray-700 mb-1">
+                    Upload PowerPoint Template (.pptx or .potx):
+                </label>
+                <input type="file" id="template-file" accept=".pptx,.potx" required
+                    class="mt-1 block w-full text-sm text-gray-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-full file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-blue-50 file:text-blue-700
+                    hover:file:bg-blue-100">
+            </div>
 
-      <div>
-        <label class="block text-sm font-medium text-gray-700">Upload PowerPoint Template/Presentation (.pptx or .potx)</label>
-        <input type="file" name="template_file" accept=".pptx,.potx" required class="mt-1 block w-full rounded-2xl border-gray-300 shadow-sm focus:ring-2 focus:ring-indigo-500 p-3"/>
-        <p class="text-xs text-gray-500 mt-1">We do not store files or keys. Files are processed in-memory and discarded.</p>
-      </div>
+            <button type="submit" id="submit-button"
+                class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200">
+                Generate Presentation
+            </button>
+        </form>
 
-      <div class="flex items-center gap-3">
-        <button type="submit" class="px-5 py-3 rounded-2xl bg-indigo-600 text-white font-semibold shadow hover:bg-indigo-500">Generate Presentation</button>
-        <span id="spinner" class="text-gray-500" hx-ext="class-tools" _="on htmx:beforeSend add .animate-pulse to #spinner then put 'Processing...' into me end on htmx:afterOnLoad remove .animate-pulse from #spinner then put '' into me end"></span>
-      </div>
-    </form>
+        <div id="status" class="mt-8 text-center font-semibold"></div>
 
-    <section id="result" class="mt-8"></section>
+    </div>
 
-    <footer class="mt-14 text-xs text-gray-500">
-      <p>Built with Flask + python-pptx. MIT Licensed.</p>
-    </footer>
-  </div>
+    <script>
+        document.getElementById('presentation-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const form = e.target;
+            const statusDiv = document.getElementById('status');
+            const submitButton = document.getElementById('submit-button');
+
+            // Show loading state
+            statusDiv.textContent = 'Generating your presentation... This may take a moment.';
+            statusDiv.className = 'text-gray-500';
+            submitButton.disabled = true;
+            submitButton.textContent = 'Generating...';
+
+            const formData = new FormData();
+            formData.append('text_input', document.getElementById('text-input').value);
+            formData.append('llm_guidance', document.getElementById('llm-guidance').value);
+            formData.append('api_key', document.getElementById('api-key').value);
+            formData.append('template', document.getElementById('template-file').files[0]);
+
+            try {
+                const response = await fetch('/generate_pptx', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'generated_presentation.pptx';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    statusDiv.textContent = 'Success! Your presentation is downloading.';
+                    statusDiv.className = 'text-green-600';
+                } else {
+                    const error = await response.json();
+                    statusDiv.textContent = 'Error: ' + (error.error || 'Something went wrong on the server.');
+                    statusDiv.className = 'text-red-600';
+                }
+            } catch (error) {
+                console.error('Fetch error:', error);
+                statusDiv.textContent = 'An error occurred. Please check your network connection and try again.';
+                statusDiv.className = 'text-red-600';
+            } finally {
+                // Reset form and button state
+                submitButton.disabled = false;
+                submitButton.textContent = 'Generate Presentation';
+            }
+        });
+    </script>
 </body>
 </html>
