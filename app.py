@@ -1,289 +1,220 @@
-
-import io
 import os
-import re
-import tempfile
-from typing import List, Optional
-
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+import json
+import io
+import mimetypes
+from flask import Flask, request, jsonify, send_file
+from werkzeug.utils import secure_filename
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import PP_PLACEHOLDER
-import requests
+from pptx.enum.dml import MSO_THEME_COLOR
+import openai  # Using OpenAI as a concrete example
 
-app = FastAPI(title="Presentify", version="1.0")
+# Create a Flask application instance
+app = Flask(__name__)
+# Configure a secure upload folder for temporary files
+app.config['UPLOAD_FOLDER'] = 'temp_uploads'
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+# Define allowed file extensions for templates
+ALLOWED_EXTENSIONS = {'pptx', 'potx'}
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def call_llm(provider: str, api_key: str, text: str, guidance: str) -> Optional[str]:
-    provider = (provider or "").lower().strip()
-    prompt = f"""
-You are a slide architect. Rewrite the user's content into a slide outline in JSON.
-
-Return JSON with this shape (and nothing else):
-{{
-  "slides": [
-    {{"title": "Slide Title", "bullets": ["point 1", "point 2"], "notes": "optional speaker notes"}}
-  ]
-}}
-
-Guidance: {guidance or "general"}
-
-User content:
-{text}
-""".strip()
-
+# A helper function to extract key styles and images from the template.
+# This is a simplified implementation. A production-grade version would be much more robust.
+def extract_template_info(template_path):
+    """
+    Extracts essential style information from the PowerPoint template.
+    """
     try:
-        if provider == "openai":
-            url = "https://api.openai.com/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            data = {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": "You convert content into a concise slide outline JSON."},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.2,
-            }
-            r = requests.post(url, headers=headers, json=data, timeout=45)
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
-        elif provider == "anthropic":
-            url = "https://api.anthropic.com/v1/messages"
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            }
-            data = {
-                "model": "claude-3-haiku-20240307",
-                "max_tokens": 1200,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-            r = requests.post(url, headers=headers, json=data, timeout=45)
-            r.raise_for_status()
-            return "".join([b["text"] for b in r.json()["content"] if b.get("type")=="text"])
-        elif provider == "gemini":
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-            data = {"contents": [{"parts": [{"text": prompt}]}]}
-            r = requests.post(url, json=data, timeout=45)
-            r.raise_for_status()
-            js = r.json()
-            return js["candidates"][0]["content"]["parts"][0]["text"]
-        else:
-            return None
-    except Exception:
-        return None
+        prs = Presentation(template_path)
+        styles = {}
 
-def split_into_sections(text: str) -> List[dict]:
-    text = text.strip()
-    if not text:
-        return []
-    lines = text.splitlines()
-    slides = []
-    current_title = None
-    current_points = []
+        # Attempt to get a title slide and content slide layout for style sampling
+        try:
+            title_layout = prs.slide_layouts[0]
+            # Extracting font name from the title placeholder
+            title_placeholder = title_layout.placeholders[0]
+            if title_placeholder.has_text_frame:
+                styles['title_font'] = title_placeholder.text_frame.paragraphs[0].font.name
+        except (IndexError, AttributeError):
+            styles['title_font'] = 'Calibri'
 
-    def flush():
-        nonlocal current_title, current_points
-        if current_title or current_points:
-            slides.append({
-                "title": current_title or (current_points[0][:60] if current_points else "Slide"),
-                "bullets": [b for b in current_points if b.strip()][:8]
-            })
-        current_title, current_points = None, []
+        try:
+            content_layout = prs.slide_layouts[1]
+            # Extracting font name from the content placeholder
+            content_placeholder = content_layout.placeholders[1]
+            if content_placeholder.has_text_frame:
+                styles['content_font'] = content_placeholder.text_frame.paragraphs[0].font.name
+        except (IndexError, AttributeError):
+            styles['content_font'] = 'Calibri'
 
-    import re as _re
-    for ln in lines:
-        if _re.match(r'^\s*#{1,3}\s+', ln):
-            flush()
-            current_title = _re.sub(r'^\s*#{1,3}\s+', '', ln).strip()
-        elif _re.match(r'^\s*[-*+]\s+', ln):
-            current_points.append(_re.sub(r'^\s*[-*+]\s+', '', ln).strip())
-        elif ln.strip():
-            parts = _re.split(r'(?<=[.!?])\s+', ln.strip())
-            for p in parts:
-                if p:
-                    current_points.append(p.strip())
-    flush()
-    if len(slides) > 30:
-        slides = slides[:30]
-    if len(slides) == 1 and len(slides[0]["bullets"]) > 10 and not slides[0]["title"]:
-        bullets = slides[0]["bullets"]
-        slides = []
-        for i in range(0, len(bullets), 6):
-            slides.append({"title": f"Section {len(slides)+1}", "bullets": bullets[i:i+6]})
-    return slides
+        # This is where a more advanced implementation would also extract colors,
+        # and images from master slides and layouts. For this example, we'll
+        # just use the extracted fonts.
 
-def parse_outline(text: str, guidance: str, provider: str, api_key: str) -> List[dict]:
-    if api_key and provider:
-        llm = call_llm(provider, api_key, text, guidance)
-        if llm:
-            try:
-                import json
-                js = json.loads(llm)
-                if isinstance(js, dict) and "slides" in js and isinstance(js["slides"], list):
-                    normalized = []
-                    for s in js["slides"]:
-                        title = (s.get("title") or "").strip() or "Slide"
-                        bullets = [str(b).strip() for b in (s.get("bullets") or []) if str(b).strip()][:8]
-                        notes = str(s.get("notes") or "").strip()
-                        normalized.append({"title": title, "bullets": bullets, "notes": notes})
-                    if normalized:
-                        return normalized
-            except Exception:
-                pass
-    slides = split_into_sections(text)
-    for s in slides:
-        s["notes"] = ""
-    return slides
-
-from pptx.dml.color import RGBColor
-from pptx import Presentation
-from pptx.enum.shapes import PP_PLACEHOLDER
-
-def extract_template_images(prs: Presentation, tmpdir: str):
-    paths = []
-    pkg = prs.part.package
-    for idx, ipart in enumerate(getattr(pkg, "image_parts", [])):
-        ext = os.path.splitext(ipart.partname)[1] or ".png"
-        pth = os.path.join(tmpdir, f"tpl_img_{idx}{ext}")
-        with open(pth, "wb") as f:
-            f.write(ipart.blob)
-        paths.append(pth)
-    return paths
-
-def apply_branding_defaults(prs: Presentation):
-    try:
-        theme = prs.presentation_part.theme.part.themeElements
-        accent = theme.clrScheme.accent1.sysClr.lastClr if hasattr(theme.clrScheme.accent1, "sysClr") else None
-        if not accent and hasattr(theme.clrScheme.accent1, "srgbClr"):
-            accent = theme.clrScheme.accent1.srgbClr.val
-        if accent:
-            rgb = bytes.fromhex(accent)
-            return RGBColor(rgb[0], rgb[1], rgb[2])
-    except Exception:
-        pass
-    return RGBColor(30, 41, 59)
-
-def pick_layout(prs: Presentation):
-    candidates = [l for l in prs.slide_layouts]
-    for l in candidates:
-        name = (getattr(l, 'name', '') or '').lower()
-        if 'title and content' in name:
-            return l
-    for l in candidates:
-        name = (getattr(l, 'name', '') or '').lower()
-        if 'title only' in name or 'title' in name:
-            return l
-    return prs.slide_layouts[0]
-
-def build_pptx(template_bytes: bytes, slides: list) -> bytes:
-    prs = Presentation(io.BytesIO(template_bytes))
-    brand_color = apply_branding_defaults(prs)
-
-    import tempfile as _tf
-    with _tf.TemporaryDirectory() as td:
-        reuse_imgs = extract_template_images(prs, td)
-        layout = pick_layout(prs)
-        img_index = 0
-
-        for s in slides:
-            slide = prs.slides.add_slide(layout)
-
-            if slide.shapes.title:
-                slide.shapes.title.text = s["title"][:120]
-
-            body = None
-            for ph in slide.placeholders:
-                if ph.placeholder_format.type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.CONTENT):
-                    body = ph
-                    break
-
-            if body:
-                body.text = ""
-                tf = body.text_frame
-                tf.clear()
-                if s["bullets"]:
-                    p = tf.paragraphs[0]
-                    p.text = s["bullets"][0]
-                    p.level = 0
-                    p.font.size = Pt(18)
-                    p.font.color.rgb = brand_color
-                    for b in s["bullets"][1:]:
-                        p = tf.add_paragraph()
-                        p.text = b
-                        p.level = 0
-                        p.font.size = Pt(18)
-                        p.font.color.rgb = brand_color
-            else:
-                left, top, width, height = Inches(1), Inches(2), Inches(8), Inches(4)
-                box = slide.shapes.add_textbox(left, top, width, height)
-                tf = box.text_frame
-                tf.clear()
-                for i, b in enumerate(s["bullets"]):
-                    p = tf.add_paragraph() if i else tf.paragraphs[0]
-                    p.text = f"• {b}"
-                    p.font.size = Pt(18)
-                    p.font.color.rgb = brand_color
-
-            if reuse_imgs:
-                try:
-                    img_path = reuse_imgs[img_index % len(reuse_imgs)]
-                    img_index += 1
-                    slide.shapes.add_picture(img_path, Inches(9), Inches(1.5), height=Inches(3))
-                except Exception:
-                    pass
-
-            if s.get("notes"):
-                slide.notes_slide.notes_text_frame.text = s["notes"][:1000]
-
-        out = io.BytesIO()
-        prs.save(out)
-        out.seek(0)
-        return out.getvalue()
-
-class Health(BaseModel):
-    ok: bool
-
-@app.get("/health", response_model=Health)
-def health():
-    return {"ok": True}
-
-@app.post("/api/generate")
-async def generate(
-    text: str = Form(...),
-    guidance: str = Form(""),
-    provider: str = Form(""),
-    api_key: str = Form(""),
-    template: UploadFile = File(...),
-):
-    if not template.filename.lower().endswith((".pptx", ".potx")):
-        raise HTTPException(status_code=400, detail="Please upload a .pptx or .potx file.")
-    tpl_bytes = await template.read()
-    slides = parse_outline(text, guidance, provider, api_key)
-    if not slides:
-        raise HTTPException(status_code=400, detail="Could not parse any slides from the input.")
-    try:
-        pptx_bytes = build_pptx(tpl_bytes, slides)
+        return styles
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate PowerPoint: {e}")
-    headers = {"Content-Disposition": 'attachment; filename="presentify_output.pptx"'}
-    return StreamingResponse(io.BytesIO(pptx_bytes),
-                             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                             headers=headers)
+        print(f"Error extracting template info: {e}")
+        return {}
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+# A helper function to interact with the LLM and get structured slide content.
+def generate_slide_content(text_input, llm_guidance, api_key):
+    """
+    Sends a request to the LLM API to structure the input text into a presentation.
+    The LLM is prompted to return a specific JSON format.
+    """
+    # Define a clear system prompt to guide the LLM's behavior and persona
+    system_prompt = "You are an expert presentation designer and content strategist. Your task is to transform raw text into a well-structured and logical presentation outline. Your output MUST be in a valid JSON format as described. Do not include any additional text or explanations outside of the JSON."
+
+    # The user prompt contains the content and the guidance
+    user_prompt = f"""
+    Transform the following text into a presentation outline. Each slide should have a concise title and a list of key points.
+
+    Optional Guidance: "{llm_guidance}"
+
+    Input Text:
+    {text_input}
+
+    Strict JSON Output Format:
+    {{
+        "presentation_title": "Presentation Title",
+        "slides": [
+            {{
+                "slide_title": "Slide Title 1",
+                "content_points": ["Point 1", "Point 2", "Point 3"]
+            }},
+            {{
+                "slide_title": "Slide Title 2",
+                "content_points": ["Point 1", "Point 2"]
+            }}
+        ]
+    }}
+    """
+    
+    try:
+        # Use a `try...except` block for robust error handling
+        client = openai.OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.4
+        )
+        # Parse the JSON response from the LLM
+        slide_data = json.loads(response.choices[0].message.content)
+        return slide_data
+    except Exception as e:
+        print(f"Error calling LLM API: {e}")
+        return None
+from flask import send_from_directory
+
+@app.route('/')
+def serve_index():
+    return send_from_directory(os.getcwd(), 'frontend/index.html')
+# The main API endpoint to handle the presentation generation request.
+@app.route('/generate_pptx', methods=['POST'])
+def generate_pptx():
+    """
+    Main endpoint that orchestrates the entire process:
+    1. Receives form data and uploaded file.
+    2. Calls the LLM for content structure.
+    3. Creates a new presentation using the provided template.
+    4. Populates the presentation with LLM-generated content.
+    5. Sends the final file back to the user.
+    """
+    if 'template' not in request.files:
+        return jsonify({'error': 'No template file provided'}), 400
+
+    template_file = request.files['template']
+    text_input = request.form.get('text_input')
+    llm_guidance = request.form.get('llm_guidance', '')
+    api_key = request.form.get('api_key')
+
+    # Basic input validation
+    if not all([text_input, api_key, template_file]):
+        return jsonify({'error': 'Missing required fields (text, API key, or template)'}), 400
+
+    if template_file and allowed_file(template_file.filename):
+        # Save the uploaded template file securely and temporarily
+        filename = secure_filename(template_file.filename)
+        template_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        template_file.save(template_path)
+    else:
+        return jsonify({'error': 'Invalid file type. Please upload a .pptx or .potx file.'}), 400
+
+    try:
+        # Step 1: Generate slide content using the LLM
+        slide_data = generate_slide_content(text_input, llm_guidance, api_key)
+        if not slide_data:
+            return jsonify({'error': 'Failed to generate content from LLM. Please check your API key and input text.'}), 500
+
+        # Step 2: Create the presentation based on the template
+        prs = Presentation(template_path)
+        template_styles = extract_template_info(template_path)
+
+        # Add a title slide
+        title_slide_layout = prs.slide_layouts[0]
+        slide = prs.slides.add_slide(title_slide_layout)
+        title_shape = slide.shapes.title
+        title_shape.text = slide_data['presentation_title']
+        
+        # Apply the font from the template if available
+        if 'title_font' in template_styles:
+            title_shape.text_frame.paragraphs[0].font.name = template_styles['title_font']
+
+        # Add content slides
+        content_slide_layout = prs.slide_layouts[1] # A typical 'Title and Content' layout
+        for slide_info in slide_data['slides']:
+            slide = prs.slides.add_slide(content_slide_layout)
+            title_shape = slide.shapes.title
+            body_shape = slide.placeholders[1]
+
+            title_shape.text = slide_info['slide_title']
+            
+            # Apply the font from the template if available
+            if 'title_font' in template_styles:
+                title_shape.text_frame.paragraphs[0].font.name = template_styles['title_font']
+                
+            # Populate the content placeholder with bullet points
+            tf = body_shape.text_frame
+            tf.clear()
+            for point in slide_info['content_points']:
+                p = tf.add_paragraph()
+                p.text = point
+                p.level = 0
+                if 'content_font' in template_styles:
+                    p.font.name = template_styles['content_font']
+            
+    except Exception as e:
+        print(f"Error creating PowerPoint: {e}")
+        return jsonify({'error': f'Failed to create presentation file: {e}'}), 500
+    finally:
+        # Clean up the uploaded template file to save disk space
+        os.remove(template_path)
+
+    # Step 3: Save the generated presentation to a buffer and serve it
+    try:
+        output = io.BytesIO()
+        prs.save(output)
+        output.seek(0)
+        
+        # Return the file for download
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="generated_presentation.pptx",
+            mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        )
+    except Exception as e:
+        print(f"Error serving file: {e}")
+        return jsonify({'error': f'Failed to serve the generated file: {e}'}), 500
+
+if __name__ == '__main__':
+    # Start the Flask application in debug mode
+    app.run(debug=True)
