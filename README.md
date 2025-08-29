@@ -30,8 +30,8 @@ Follow these steps to set up and run the application locally.
 
 ##Clone the Repository:
 
-git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
-cd your-repo-name
+git clone [https://github.com/your-username/your-repo-name.git](https://github.com/Ananthavalli1991/llm_ppt.git)
+cd llm_ppt
 
 ##Create a Virtual Environment: (Recommended)
 
