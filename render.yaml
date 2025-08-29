@@ -3,7 +3,7 @@ services:
     name: llm_ppt
     env: python
     region: oregon  # or any Render region you prefer
-    buildCommand:"pip install -r requirements.txt"
+    buildCommand: "apt-get update && apt-get install -y libxml2-dev libxslt1-dev zlib1g-dev libjpeg-dev && pip install --upgrade pip setuptools wheel && pip install -r requirements.txt"
     startCommand: "gunicorn -w 2 -b 0.0.0.0:8000 app:app"
     autoDeploy: true
     plan: free
