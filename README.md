@@ -45,6 +45,5 @@ pip install -r requirements.txt
 ##Run the Flask Server:
 
 python app.py
-
-## the App: Navigate to http://127.0.0.1:5000/ in your web browser.
+###the App: Navigate to http://127.0.0.1:5000/ in your web browser.
 
